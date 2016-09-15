@@ -3,22 +3,23 @@ package pool
 import (
 	"errors"
 	"fmt"
-	"net"
 	"sync"
 )
 
+type GenericConn interface {}
+
 // channelPool implements the Pool interface based on buffered channels.
 type channelPool struct {
-	// storage for our net.Conn connections
+	// storage for our generic connections
 	mu    sync.Mutex
-	conns chan net.Conn
+	conns chan GenericConn
 
 	// net.Conn generator
 	factory Factory
 }
 
 // Factory is a function to create new connections.
-type Factory func() (net.Conn, error)
+type Factory func() (GenericConn, error)
 
 // NewChannelPool returns a new pool based on buffered channels with an initial
 // capacity and maximum capacity. Factory is used when initial capacity is
@@ -32,7 +33,7 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (Pool, error) {
 	}
 
 	c := &channelPool{
-		conns:   make(chan net.Conn, maxCap),
+		conns:   make(chan GenericConn, maxCap),
 		factory: factory,
 	}
 
@@ -41,7 +42,6 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (Pool, error) {
 	for i := 0; i < initialCap; i++ {
 		conn, err := factory()
 		if err != nil {
-			c.Close()
 			return nil, fmt.Errorf("factory is not able to fill the pool: %s", err)
 		}
 		c.conns <- conn
@@ -50,7 +50,7 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (Pool, error) {
 	return c, nil
 }
 
-func (c *channelPool) getConns() chan net.Conn {
+func (c *channelPool) getConns() chan GenericConn {
 	c.mu.Lock()
 	conns := c.conns
 	c.mu.Unlock()
@@ -60,7 +60,7 @@ func (c *channelPool) getConns() chan net.Conn {
 // Get implements the Pool interfaces Get() method. If there is no new
 // connection available in the pool, a new connection will be created via the
 // Factory() method.
-func (c *channelPool) Get() (net.Conn, error) {
+func (c *channelPool) Get() (GenericConn, error) {
 	conns := c.getConns()
 	if conns == nil {
 		return nil, ErrClosed
@@ -74,20 +74,20 @@ func (c *channelPool) Get() (net.Conn, error) {
 			return nil, ErrClosed
 		}
 
-		return c.wrapConn(conn), nil
+		return conn, nil
 	default:
 		conn, err := c.factory()
 		if err != nil {
 			return nil, err
 		}
 
-		return c.wrapConn(conn), nil
+		return conn, nil
 	}
 }
 
 // put puts the connection back to the pool. If the pool is full or closed,
 // conn is simply closed. A nil conn will be rejected.
-func (c *channelPool) put(conn net.Conn) error {
+func (c *channelPool) Put(conn GenericConn) error {
 	if conn == nil {
 		return errors.New("connection is nil. rejecting")
 	}
@@ -97,7 +97,7 @@ func (c *channelPool) put(conn net.Conn) error {
 
 	if c.conns == nil {
 		// pool is closed, close passed connection
-		return conn.Close()
+		return nil
 	}
 
 	// put the resource back into the pool. If the pool is full, this will
@@ -106,10 +106,11 @@ func (c *channelPool) put(conn net.Conn) error {
 	case c.conns <- conn:
 		return nil
 	default:
-		// pool is full, close passed connection
-		return conn.Close()
+		return nil
 	}
 }
+
+func (c *channelPool) Len() int { return len(c.getConns()) }
 
 func (c *channelPool) Close() {
 	c.mu.Lock()
@@ -123,9 +124,4 @@ func (c *channelPool) Close() {
 	}
 
 	close(conns)
-	for conn := range conns {
-		conn.Close()
-	}
 }
-
-func (c *channelPool) Len() int { return len(c.getConns()) }

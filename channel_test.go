@@ -3,18 +3,28 @@ package pool
 import (
 	"log"
 	"math/rand"
-	"net"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
+	"io/ioutil"
+	"bytes"
+	"fmt"
+	"strconv"
 )
 
 var (
 	InitialCap = 5
 	MaximumCap = 30
-	network    = "tcp"
-	address    = "127.0.0.1:7777"
-	factory    = func() (net.Conn, error) { return net.Dial(network, address) }
+	address    = "http://127.0.0.1:7777"
+
+	factory    = func() (GenericConn, error) { return &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConnsPerHost: 1,
+			// to make a point that this is what we want
+			DisableKeepAlives: false,
+		},
+	}, nil }
 )
 
 func init() {
@@ -40,7 +50,7 @@ func TestPool_Get_Impl(t *testing.T) {
 		t.Errorf("Get error: %s", err)
 	}
 
-	_, ok := conn.(*PoolConn)
+	_, ok := conn.(*http.Client)
 	if !ok {
 		t.Errorf("Conn is not of type poolConn")
 	}
@@ -94,7 +104,7 @@ func TestPool_Put(t *testing.T) {
 	defer p.Close()
 
 	// get/create from the pool
-	conns := make([]net.Conn, MaximumCap)
+	conns := make([]GenericConn, MaximumCap)
 	for i := 0; i < MaximumCap; i++ {
 		conn, _ := p.Get()
 		conns[i] = conn
@@ -102,7 +112,7 @@ func TestPool_Put(t *testing.T) {
 
 	// now put them all back
 	for _, conn := range conns {
-		conn.Close()
+		p.Put(conn)
 	}
 
 	if p.Len() != MaximumCap {
@@ -113,7 +123,7 @@ func TestPool_Put(t *testing.T) {
 	conn, _ := p.Get()
 	p.Close() // close pool
 
-	conn.Close() // try to put into a full pool
+	p.Put(conn)
 	if p.Len() != 0 {
 		t.Errorf("Put error. Closed pool shouldn't allow to put connections.")
 	}
@@ -125,22 +135,20 @@ func TestPool_PutUnusableConn(t *testing.T) {
 
 	// ensure pool is not empty
 	conn, _ := p.Get()
-	conn.Close()
+	p.Put(conn)
 
 	poolSize := p.Len()
 	conn, _ = p.Get()
-	conn.Close()
+	p.Put(conn)
 	if p.Len() != poolSize {
 		t.Errorf("Pool size is expected to be equal to initial size")
 	}
 
 	conn, _ = p.Get()
-	if pc, ok := conn.(*PoolConn); !ok {
+	if _, ok := conn.(GenericConn); !ok {
 		t.Errorf("impossible")
-	} else {
-		pc.MarkUnusable()
 	}
-	conn.Close()
+
 	if p.Len() != poolSize-1 {
 		t.Errorf("Pool size is expected to be initial_size - 1", p.Len(), poolSize-1)
 	}
@@ -184,7 +192,7 @@ func TestPool_Close(t *testing.T) {
 
 func TestPoolConcurrent(t *testing.T) {
 	p, _ := newChannelPool()
-	pipe := make(chan net.Conn, 0)
+	pipe := make(chan GenericConn, 0)
 
 	go func() {
 		p.Close()
@@ -202,7 +210,7 @@ func TestPoolConcurrent(t *testing.T) {
 			if conn == nil {
 				return
 			}
-			conn.Close()
+			p.Put(conn)
 		}()
 	}
 }
@@ -213,9 +221,19 @@ func TestPoolWriteRead(t *testing.T) {
 	conn, _ := p.Get()
 
 	msg := "hello"
-	_, err := conn.Write([]byte(msg))
+	resp, err := conn.(*http.Client).Post("http://localhost:7777/echo", "text/plain", bytes.NewReader([]byte(msg)))
 	if err != nil {
 		t.Error(err)
+	}
+	respMsg, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		t.Error(err)
+	} else {
+		defer resp.Body.Close()
+	}
+
+	if msg != string(respMsg) {
+		t.Errorf("Expected response %s but got %s ", msg, resp)
 	}
 }
 
@@ -230,7 +248,7 @@ func TestPoolConcurrent2(t *testing.T) {
 			go func(i int) {
 				conn, _ := p.Get()
 				time.Sleep(time.Millisecond * time.Duration(rand.Intn(100)))
-				conn.Close()
+				p.Put(conn)
 				wg.Done()
 			}(i)
 		}
@@ -241,7 +259,7 @@ func TestPoolConcurrent2(t *testing.T) {
 		go func(i int) {
 			conn, _ := p.Get()
 			time.Sleep(time.Millisecond * time.Duration(rand.Intn(100)))
-			conn.Close()
+			p.Put(conn)
 			wg.Done()
 		}(i)
 	}
@@ -253,22 +271,32 @@ func newChannelPool() (Pool, error) {
 	return NewChannelPool(InitialCap, MaximumCap, factory)
 }
 
+func ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("ServeHTTP called")
+
+	queryArgs := r.URL.Query()
+
+	data, err := ioutil.ReadAll(r.Body)
+	if err == nil {
+		defer r.Body.Close()
+	}
+
+	if sleepDur, ok := queryArgs["sleep"]; ok {
+		sleepDurSec, err := strconv.Atoi(sleepDur[0])
+		if err != nil {
+			panic(err)
+		}
+		time.Sleep(time.Duration(sleepDurSec) * time.Second)
+	}
+	w.Write(data)
+}
+
+
 func simpleTCPServer() {
-	l, err := net.Listen(network, address)
+	http.HandleFunc("/echo", ServeHTTP)
+	err := http.ListenAndServe(":7777", nil)
+
 	if err != nil {
 		log.Fatal(err)
-	}
-	defer l.Close()
-
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		go func() {
-			buffer := make([]byte, 256)
-			conn.Read(buffer)
-		}()
 	}
 }
