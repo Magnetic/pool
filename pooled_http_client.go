@@ -5,10 +5,19 @@ import (
 	"io"
 )
 
+type HttpClient interface {
+	Do(req * http.Request) (resp * http.Response, err error)
+	Get(url string) (* http.Response, error)
+	Post(url string, bodyType string, body io.Reader) (* http.Response, error)
+}
 
 type PooledHttpClient struct {
 	http.Client
 	connPool Pool
+}
+
+func NewPooledHttpCient(pool Pool) (* PooledHttpClient) {
+	return &PooledHttpClient{connPool: pool}
 }
 
 func connFetcher(p Pool) (func () (* http.Client)) {
