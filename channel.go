@@ -27,11 +27,7 @@ type Factory func() (GenericConn, error)
 // until a new Get() is called. During a Get(), If there is no new connection
 // available in the pool, a new connection will be created via the Factory()
 // method.
-func NewChannelPool(initialCap, maxCap int, factory Factory) (Pool, error) {
-	if initialCap < 0 || maxCap <= 0 || initialCap > maxCap {
-		return nil, errors.New("invalid capacity settings")
-	}
-
+func NewChannelPool(maxCap int, factory Factory) (Pool, error) {
 	c := &channelPool{
 		conns:   make(chan GenericConn, maxCap),
 		factory: factory,
@@ -39,7 +35,7 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (Pool, error) {
 
 	// create initial connections, if something goes wrong,
 	// just close the pool error out.
-	for i := 0; i < initialCap; i++ {
+	for i := 0; i < maxCap; i++ {
 		conn, err := factory()
 		if err != nil {
 			return nil, fmt.Errorf("factory is not able to fill the pool: %s", err)
@@ -72,13 +68,6 @@ func (c *channelPool) Get() (GenericConn, error) {
 	case conn := <-conns:
 		if conn == nil {
 			return nil, ErrClosed
-		}
-
-		return conn, nil
-	default:
-		conn, err := c.factory()
-		if err != nil {
-			return nil, err
 		}
 
 		return conn, nil

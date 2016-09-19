@@ -41,7 +41,7 @@ func doPost (cl * PooledHttpClient, sleepDur int, body string, respChan chan htt
 
 
 func TestPooledHttpClient_Post(t *testing.T) {
-	p, _ := NewChannelPool(2, 3, factory)
+	p, _ := NewChannelPool(2, factory)
 
 	pooledClient := PooledHttpClient{connPool: p}
 
@@ -56,7 +56,7 @@ func TestPooledHttpClient_Post(t *testing.T) {
 }
 
 func TestPooledHttpClient_Do(t *testing.T) {
-	p, _ := NewChannelPool(2, 3, factory)
+	p, _ := NewChannelPool(2, factory)
 
 	pooledClient := PooledHttpClient{connPool: p}
 

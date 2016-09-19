@@ -11,10 +11,10 @@ import (
 	"bytes"
 	"fmt"
 	"strconv"
+	"golang.org/x/net/context"
 )
 
 var (
-	InitialCap = 5
 	MaximumCap = 30
 	address    = "http://127.0.0.1:7777"
 
@@ -66,14 +66,14 @@ func TestPool_Get(t *testing.T) {
 	}
 
 	// after one get, current capacity should be lowered by one.
-	if p.Len() != (InitialCap - 1) {
+	if p.Len() != (MaximumCap - 1) {
 		t.Errorf("Get error. Expecting %d, got %d",
-			(InitialCap - 1), p.Len())
+			(MaximumCap - 1), p.Len())
 	}
 
 	// get them all
 	var wg sync.WaitGroup
-	for i := 0; i < (InitialCap - 1); i++ {
+	for i := 0; i < (MaximumCap - 1); i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -87,17 +87,42 @@ func TestPool_Get(t *testing.T) {
 
 	if p.Len() != 0 {
 		t.Errorf("Get error. Expecting %d, got %d",
-			(InitialCap - 1), p.Len())
+			(MaximumCap - 1), p.Len())
 	}
 
-	_, err = p.Get()
-	if err != nil {
-		t.Errorf("Get error: %s", err)
+	// confirm that exhausting the pool and requesting a new connection results in a wait
+
+	waitMillis := 30
+	ctx, _ := context.WithTimeout(context.Background(), time.Duration(waitMillis) * time.Millisecond)
+	connChannel := make (chan GenericConn)
+	errorChannel := make (chan error)
+	timedOut := false
+
+	go func () {
+		conn, err := p.Get()
+		if err != nil {
+			errorChannel <- err
+		} else {
+			connChannel <- conn
+		}
+	}()
+	select {
+	case <- connChannel:
+		timedOut = false
+
+	case <- errorChannel:
+		timedOut = false
+
+	case <- ctx.Done():
+		timedOut = true
+	}
+	if !timedOut {
+		t.Errorf("Got a connection after pool was exhausted: %s", err)
 	}
 }
 
 func TestPool_Put(t *testing.T) {
-	p, err := NewChannelPool(0, 30, factory)
+	p, err := NewChannelPool(30, factory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,9 +145,9 @@ func TestPool_Put(t *testing.T) {
 			1, p.Len())
 	}
 
-	conn, _ := p.Get()
 	p.Close() // close pool
 
+	conn, _ := factory()
 	p.Put(conn)
 	if p.Len() != 0 {
 		t.Errorf("Put error. Closed pool shouldn't allow to put connections.")
@@ -158,9 +183,9 @@ func TestPool_UsedCapacity(t *testing.T) {
 	p, _ := newChannelPool()
 	defer p.Close()
 
-	if p.Len() != InitialCap {
+	if p.Len() != MaximumCap {
 		t.Errorf("InitialCap error. Expecting %d, got %d",
-			InitialCap, p.Len())
+			MaximumCap, p.Len())
 	}
 }
 
@@ -216,7 +241,7 @@ func TestPoolConcurrent(t *testing.T) {
 }
 
 func TestPoolWriteRead(t *testing.T) {
-	p, _ := NewChannelPool(0, 30, factory)
+	p, _ := NewChannelPool(30, factory)
 
 	conn, _ := p.Get()
 
@@ -238,7 +263,7 @@ func TestPoolWriteRead(t *testing.T) {
 }
 
 func TestPoolConcurrent2(t *testing.T) {
-	p, _ := NewChannelPool(0, 30, factory)
+	p, _ := NewChannelPool(30, factory)
 
 	var wg sync.WaitGroup
 
@@ -268,7 +293,7 @@ func TestPoolConcurrent2(t *testing.T) {
 }
 
 func newChannelPool() (Pool, error) {
-	return NewChannelPool(InitialCap, MaximumCap, factory)
+	return NewChannelPool(MaximumCap, factory)
 }
 
 func ServeHTTP(w http.ResponseWriter, r *http.Request) {
