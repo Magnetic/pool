@@ -1,38 +1,51 @@
 package pool
 
 import (
+	"bytes"
+	"fmt"
+	"golang.org/x/net/context"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
-	"io/ioutil"
-	"bytes"
-	"fmt"
-	"strconv"
-	"golang.org/x/net/context"
 )
 
 var (
 	MaximumCap = 30
 	address    = "http://127.0.0.1:7777"
 
-	factory    = func() (GenericConn, error) { return &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConnsPerHost: 1,
-			// to make a point that this is what we want
-			DisableKeepAlives: false,
-		},
-	}, nil }
+	factory = func() (GenericConn, error) {
+		return &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConnsPerHost: 1,
+				// to make a point that this is what we want
+				DisableKeepAlives:     false,
+				ExpectContinueTimeout: 15 * time.Second,
+				ResponseHeaderTimeout: 15 * time.Second,
+			},
+			Timeout: 15 * time.Second,
+		}, nil
+	}
+
+	once sync.Once
 )
 
 func init() {
-	// used for factory function
-	go simpleTCPServer()
-	time.Sleep(time.Millisecond * 300) // wait until tcp server has been settled
+	StartHTTPServer()
+}
 
-	rand.Seed(time.Now().UTC().UnixNano())
+func StartHTTPServer() {
+	once.Do(func() {
+		// used for factory function
+		go simpleHTTPServer()
+		time.Sleep(time.Millisecond * 300) // wait until tcp server has been settled
+		rand.Seed(time.Now().UTC().UnixNano())
+	})
+
 }
 
 func TestNew(t *testing.T) {
@@ -93,12 +106,12 @@ func TestPool_Get(t *testing.T) {
 	// confirm that exhausting the pool and requesting a new connection results in a wait
 
 	waitMillis := 30
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(waitMillis) * time.Millisecond)
-	connChannel := make (chan GenericConn)
-	errorChannel := make (chan error)
+	ctx, _ := context.WithTimeout(context.Background(), time.Duration(waitMillis)*time.Millisecond)
+	connChannel := make(chan GenericConn)
+	errorChannel := make(chan error)
 	timedOut := false
 
-	go func () {
+	go func() {
 		conn, err := p.Get()
 		if err != nil {
 			errorChannel <- err
@@ -107,13 +120,13 @@ func TestPool_Get(t *testing.T) {
 		}
 	}()
 	select {
-	case <- connChannel:
+	case <-connChannel:
 		timedOut = false
 
-	case <- errorChannel:
+	case <-errorChannel:
 		timedOut = false
 
-	case <- ctx.Done():
+	case <-ctx.Done():
 		timedOut = true
 	}
 	if !timedOut {
@@ -311,15 +324,21 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			panic(err)
 		}
+		fmt.Println("sleeping for ", sleepDur, "seconds")
 		time.Sleep(time.Duration(sleepDurSec) * time.Second)
 	}
 	w.Write(data)
 }
 
-
-func simpleTCPServer() {
+func simpleHTTPServer() {
 	http.HandleFunc("/echo", ServeHTTP)
-	err := http.ListenAndServe(":7777", nil)
+
+	srv := &http.Server{
+		Addr:         ":7777",
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+	err := srv.ListenAndServe()
 
 	if err != nil {
 		log.Fatal(err)

@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-type GenericConn interface {}
+type GenericConn interface{}
 
 // channelPool implements the Pool interface based on buffered channels.
 type channelPool struct {
@@ -47,8 +47,7 @@ func NewChannelPool(maxCap int, factory Factory) (Pool, error) {
 }
 
 // Get implements the Pool interfaces Get() method. If there is no new
-// connection available in the pool, a new connection will be created via the
-// Factory() method.
+// connection available in the pool, the client blocks
 func (c *channelPool) Get() (GenericConn, error) {
 	if c.conns == nil {
 		return nil, ErrClosed
@@ -92,13 +91,12 @@ func (c *channelPool) Len() int { return len(c.conns) }
 
 func (c *channelPool) Close() {
 	if c.conns != nil && len(c.conns) > 0 {
-		_, isPoolOpen := <- c.conns
+		_, isPoolOpen := <-c.conns
 		if !isPoolOpen {
 			close(c.conns)
 		}
 
 	}
 	c.conns = nil
-
 	c.factory = nil
 }
