@@ -46,26 +46,18 @@ func NewChannelPool(maxCap int, factory Factory) (Pool, error) {
 	return c, nil
 }
 
-func (c *channelPool) getConns() chan GenericConn {
-	c.mu.Lock()
-	conns := c.conns
-	c.mu.Unlock()
-	return conns
-}
-
 // Get implements the Pool interfaces Get() method. If there is no new
 // connection available in the pool, a new connection will be created via the
 // Factory() method.
 func (c *channelPool) Get() (GenericConn, error) {
-	conns := c.getConns()
-	if conns == nil {
+	if c.conns == nil {
 		return nil, ErrClosed
 	}
 
 	// wrap our connections with out custom net.Conn implementation (wrapConn
 	// method) that puts the connection back to the pool if it's closed.
 	select {
-	case conn := <-conns:
+	case conn := <-c.conns:
 		if conn == nil {
 			return nil, ErrClosed
 		}
@@ -80,9 +72,6 @@ func (c *channelPool) Put(conn GenericConn) error {
 	if conn == nil {
 		return errors.New("connection is nil. rejecting")
 	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	if c.conns == nil {
 		// pool is closed, close passed connection
@@ -99,18 +88,17 @@ func (c *channelPool) Put(conn GenericConn) error {
 	}
 }
 
-func (c *channelPool) Len() int { return len(c.getConns()) }
+func (c *channelPool) Len() int { return len(c.conns) }
 
 func (c *channelPool) Close() {
-	c.mu.Lock()
-	conns := c.conns
-	c.conns = nil
-	c.factory = nil
-	c.mu.Unlock()
+	if c.conns != nil && len(c.conns) > 0 {
+		_, isPoolOpen := <- c.conns
+		if !isPoolOpen {
+			close(c.conns)
+		}
 
-	if conns == nil {
-		return
 	}
+	c.conns = nil
 
-	close(conns)
+	c.factory = nil
 }
