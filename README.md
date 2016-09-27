@@ -1,7 +1,6 @@
 # Pool
 
-Pool is a thread safe connection pool for net.Conn interface. It can be used to
-manage and reuse connections.
+Pool is a thread safe connection pool for any kinds of connections. It enforces blocking of the client requests when the pool is exhausted
 
 
 ## Install and Usage
