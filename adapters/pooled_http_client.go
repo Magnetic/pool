@@ -22,8 +22,18 @@ type PooledHttpClient struct {
 	OutstandingConns int32
 }
 
-func NewPooledHttpCient(poolSize int, factory func() (* http.Client, error)) *PooledHttpClient {
-	return &PooledHttpClient{connPool: pool}
+func NewPooledHttpCient(poolSize int, factory func() (HttpClient, error)) (*PooledHttpClient, error) {
+	factoryWrapper := func() (pool.GenericConn, error) {
+		inst, err := factory()
+		if err == nil && inst != nil {
+			return inst.(pool.GenericConn), err
+		} else {
+			return nil, err
+		}
+	}
+	pool, err := pool.NewChannelPool(poolSize, factoryWrapper)
+
+	return &PooledHttpClient{connPool: pool}, err
 }
 
 func (c *PooledHttpClient) getConn() (conn *http.Client) {
