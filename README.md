@@ -8,13 +8,13 @@ Pool is a thread safe connection pool for any kinds of connections. It enforces 
 Install the package with:
 
 ```bash
-go get github.com/abelyansky/pool.v2
+go get github.com/abelyansky/pool
 ```
 
 Import it with:
 
 ```go
-import "github.com/abelyansky/pool.v2"
+import "github.com/abelyansky/pool"
 ```
 
 and use `pool` as the package name inside the code.
@@ -23,10 +23,13 @@ and use `pool` as the package name inside the code.
 
 ```go
 // create a factory() to be used with channel based pool
-factory    := func() (net.Conn, error) { return net.Dial("tcp", "127.0.0.1:4000") }
+factory    := func() (pool.GenericConnection, error) 
+ {  
+   return net.Dial("tcp", "127.0.0.1:4000").(GenericConnection) 
+ }
 
-// create a new channel based pool with an initial capacity of 5 and maximum
-// capacity of 30. The factory will create 30 initial connections and put them
+// create a new channel based pool with a maximum capacity of 30. 
+// The factory will create 30 initial connections and put them
 // into the pool.
 p, err := pool.NewChannelPool(30, factory)
 

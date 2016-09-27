@@ -199,10 +199,10 @@ func TestPooledHttpClient_Swarm(t *testing.T) {
 	for cnt := 10; cnt > 0; cnt-- {
 		go func() {
 			wg.Add(1)
-			responses += 1
 			respChannel := make(chan http.Response, 1)
 			doPost(&pooledClient, longerCallSleepDuration, "hello", respChannel)
 			wg.Done()
+			responses += 1
 		}()
 	}
 
@@ -211,9 +211,9 @@ func TestPooledHttpClient_Swarm(t *testing.T) {
 	assert.Equal(t, int32(2), pooledClient.OutstandingConns)
 	// verify no responses yet
 	assert.Equal(t, 0, responses)
-	time.Sleep(longerCallSleepDuration) // after this all responses should come in
-	assert.Equal(t, 0, pooledClient.OutstandingConns)
+	wg.Wait() // after this all responses should come in
 	assert.Equal(t, 10, responses)
+	assert.Equal(t, 0, int(pooledClient.OutstandingConns))
 
 }
 
