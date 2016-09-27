@@ -3,7 +3,6 @@ package pool
 import (
 	"errors"
 	"fmt"
-	"sync"
 )
 
 type GenericConn interface{}
@@ -11,10 +10,9 @@ type GenericConn interface{}
 // channelPool implements the Pool interface based on buffered channels.
 type channelPool struct {
 	// storage for our generic connections
-	mu    sync.Mutex
 	conns chan GenericConn
 
-	// net.Conn generator
+	// generator of generic connections
 	factory Factory
 }
 
@@ -22,11 +20,8 @@ type channelPool struct {
 type Factory func() (GenericConn, error)
 
 // NewChannelPool returns a new pool based on buffered channels with an initial
-// capacity and maximum capacity. Factory is used when initial capacity is
-// greater than zero to fill the pool. A zero initialCap doesn't fill the Pool
-// until a new Get() is called. During a Get(), If there is no new connection
-// available in the pool, a new connection will be created via the Factory()
-// method.
+// capacity fixed capacity. Factory is used to populate the pool upon creation
+//
 func NewChannelPool(maxCap int, factory Factory) (Pool, error) {
 	c := &channelPool{
 		conns:   make(chan GenericConn, maxCap),
@@ -53,8 +48,6 @@ func (c *channelPool) Get() (GenericConn, error) {
 		return nil, ErrClosed
 	}
 
-	// wrap our connections with out custom net.Conn implementation (wrapConn
-	// method) that puts the connection back to the pool if it's closed.
 	select {
 	case conn := <-c.conns:
 		if conn == nil {

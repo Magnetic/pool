@@ -1,24 +1,28 @@
-package pool
+package adapters
 
 import (
 	"io"
 	"net/http"
 	"sync/atomic"
+
+	"github.com/abelyansky/pool"
 )
 
+// HttpClient represents behavior of a client within net/http package
 type HttpClient interface {
 	Do(req *http.Request) (resp *http.Response, err error)
 	Get(url string) (*http.Response, error)
 	Post(url string, bodyType string, body io.Reader) (*http.Response, error)
 }
 
+// PooledHttpClient is an adaper for standard net/http client which delegates to a pool under the hood
 type PooledHttpClient struct {
 	http.Client
-	connPool         Pool
+	connPool         pool.Pool
 	OutstandingConns int32
 }
 
-func NewPooledHttpCient(pool Pool) *PooledHttpClient {
+func NewPooledHttpCient(poolSize int, factory func() (* http.Client, error)) *PooledHttpClient {
 	return &PooledHttpClient{connPool: pool}
 }
 
