@@ -5,8 +5,10 @@ import (
 	"sync"
 	"testing"
 	"time"
-
+	"strings"
+	
 	"golang.org/x/net/context"
+
 )
 
 var (
@@ -35,6 +37,24 @@ func TestPool_Get_Impl(t *testing.T) {
 	_, ok := connHolder.Conn.(GenericConn)
 	if !ok {
 		t.Errorf("Conn is not of type ConnectionHolder")
+	}
+}
+
+func TestChannelPool_GetWithTimeout(t *testing.T) {
+	pool, err := NewChannelPool(1, factory)
+	defer pool.Close()
+
+	_, err = pool.Get()
+	if err != nil {
+		t.Errorf("Get error: %s", err)
+	}
+
+	if pool.Len() != 0 {
+		t.Errorf("pool size is not exhausted")
+	}
+	_, err = pool.GetWithTimeout(100 * time.Millisecond)
+	if err == nil || !strings.HasPrefix(err.Error(), "timed out") {
+		t.Errorf("timeout error expected but not received")
 	}
 }
 
