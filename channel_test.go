@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 	"strings"
-	
+
 	"golang.org/x/net/context"
 
 )
@@ -120,6 +120,25 @@ func TestPool_Get(t *testing.T) {
 	}
 	if !timedOut {
 		t.Errorf("Got a connection after pool was exhausted: %s", err)
+	}
+}
+
+func TestPool_PutTwiceNotAllowed(t *testing.T) {
+	p, err := NewChannelPool(2, factory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	conn1, err := p.Get()
+	_, err = p.Get()
+
+	p.Put(conn1)
+	// attempt to add the same conn twice
+	p.Put(conn1)
+
+	if p.Len() == 2 {
+		t.Errorf("put the same connection back to the pool twice")
 	}
 }
 

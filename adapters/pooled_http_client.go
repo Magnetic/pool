@@ -4,10 +4,12 @@ import (
 	"io"
 	"net/http"
 	"sync/atomic"
-
-	"bytes"
-	"github.com/abelyansky/pool"
 	"io/ioutil"
+	"time"
+	"bytes"
+	
+	"github.com/abelyansky/pool"
+
 )
 
 // HttpClient represents behavior of a client within net/http package
@@ -21,17 +23,19 @@ type HttpClient interface {
 type PooledHttpClient struct {
 	http.Client
 	connPool         pool.Pool
+	timeout          time.Duration
 	OutstandingConns int32
 }
 
-type BodyWrapper struct {
+type HttpResponseBody struct {
 	io.ReadCloser
 	body io.Reader
 	err  error
 }
 
-func NewBodyWrapper(del io.ReadCloser) *BodyWrapper {
-	response := &BodyWrapper{}
+// read the entire content out so that we can close the body
+func newBodyWrapper(del io.ReadCloser) *HttpResponseBody {
+	response := &HttpResponseBody{}
 	data, err := ioutil.ReadAll(del)
 	del.Close()
 	response.body = bytes.NewReader(data)
@@ -39,7 +43,7 @@ func NewBodyWrapper(del io.ReadCloser) *BodyWrapper {
 	return response
 }
 
-func (w BodyWrapper) Read(p []byte) (n int, err error) {
+func (w HttpResponseBody) Read(p []byte) (n int, err error) {
 	if w.err != nil {
 		return 0, w.err
 	} else {
@@ -48,8 +52,18 @@ func (w BodyWrapper) Read(p []byte) (n int, err error) {
 
 }
 
-func (w BodyWrapper) Close() (err error) {
+func (w HttpResponseBody) Close() (err error) {
 	return nil
+}
+
+func NewPooledHttpClientWithTimeout(poolSize int, factory func() (HttpClient, error), timeout time.Duration) (*PooledHttpClient, error) {
+	client, err := NewPooledHttpClient(poolSize, factory)
+	if err != nil {
+		return client, err
+	} else {
+		client.timeout = timeout
+		return client, err
+	}
 }
 
 func NewPooledHttpClient(poolSize int, factory func() (HttpClient, error)) (*PooledHttpClient, error) {
@@ -66,17 +80,25 @@ func NewPooledHttpClient(poolSize int, factory func() (HttpClient, error)) (*Poo
 	return &PooledHttpClient{connPool: pool}, err
 }
 
-func (c *PooledHttpClient) getConn() (conn *pool.ConnectionHolder, err error) {
-	holder, err := c.connPool.Get()
+func (c *PooledHttpClient) getConn() (connHolder *pool.ConnectionHolder, err error) {
+	if c.timeout > 0 {
+		connHolder, err = c.connPool.GetWithTimeout(c.timeout)
+	} else {
+		connHolder, err = c.connPool.Get()
+	}
+
 	if err != nil {
-		return holder, err
+		return connHolder, err
 	} else {
 		atomic.AddInt32(&c.OutstandingConns, 1)
-		return holder, nil
+		return connHolder, nil
 	}
 }
 
 func (c *PooledHttpClient) putConn(conn *pool.ConnectionHolder) {
+	if conn == nil || !conn.InUse {
+		return
+	}
 	c.connPool.Put(conn)
 	atomic.AddInt32(&c.OutstandingConns, -1)
 }
@@ -92,23 +114,29 @@ func (c *PooledHttpClient) Get(url string) (resp *http.Response, err error) {
 	if err != nil {
 		return
 	}
-	resp.Body = NewBodyWrapper(resp.Body)
+	resp.Body = newBodyWrapper(resp.Body)
 	return
 }
 
 func (c *PooledHttpClient) Post(url string, bodyType string, body io.Reader) (resp *http.Response, err error) {
 	connHolder, err := c.getConn()
 	defer c.putConn(connHolder)
+	if err != nil {
+		return nil, err
+	}
 	resp, err = connHolder.Conn.(*http.Client).Post(url, bodyType, body)
-	resp.Body = NewBodyWrapper(resp.Body)
+	resp.Body = newBodyWrapper(resp.Body)
 	return
 }
 
 func (c *PooledHttpClient) Do(req *http.Request) (resp *http.Response, err error) {
 	connHolder, err := c.getConn()
 	defer c.putConn(connHolder)
+	if err != nil {
+		return nil, err
+	}
 	resp, err = connHolder.Conn.(*http.Client).Do(req)
-	resp.Body = NewBodyWrapper(resp.Body)
+	resp.Body = newBodyWrapper(resp.Body)
 	return
 }
 

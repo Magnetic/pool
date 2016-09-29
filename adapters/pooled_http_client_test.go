@@ -80,7 +80,7 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Println("sleeping for ", sleepDurNanos/1000000000, "seconds")
+		fmt.Println("sleeping for ", sleepDurNanos/1000000, "milliseconds")
 		time.Sleep(time.Duration(sleepDurNanos) * time.Nanosecond)
 	}
 	w.Write(data)
@@ -101,7 +101,7 @@ func simpleHTTPServer() {
 	}
 }
 
-func do(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan chan http.Response) {
+func do(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan chan http.Response) (err error){
 	url := testUrl
 	if sleepDur > 0 {
 		sleepdurStr := strconv.Itoa(int(sleepDur.Nanoseconds()))
@@ -109,14 +109,15 @@ func do(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan chan
 	}
 	req, err := http.NewRequest("POST", url, bytes.NewReader([]byte(body)))
 	if err != nil {
-		panic(err)
+		return err
 	}
 	resp, _ := cl.Do(req)
 	fmt.Println("got response", resp)
 	respChan <- *resp
+	return nil
 }
 
-func doPost(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan chan http.Response) {
+func doPost(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan chan http.Response) (err error) {
 	url := testUrl
 	if sleepDur > 0 {
 		sleepdurStr := strconv.Itoa(int(sleepDur.Nanoseconds()))
@@ -127,11 +128,12 @@ func doPost(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan 
 
 	if err != nil {
 		fmt.Println("got error", err)
-		panic(err)
+		return err
 	} else {
 		fmt.Println("got response", resp)
 		respChan <- *resp
 	}
+	return nil
 
 }
 
@@ -220,6 +222,38 @@ func TestPooledHttpClient_Swarm(t *testing.T) {
 
 }
 
+// TestPooledHttpClient_Swarm tests
+func TestPooledHttpClient_SwarmWithTimeout(t *testing.T) {
+	StartHTTPServer()
+
+	pool, _ := pool.NewChannelPool(2, factory)
+	pooledClient := PooledHttpClient{connPool: pool}
+	pooledClient.timeout = normalCallSleepDuration / 2
+
+	var wg sync.WaitGroup
+	responses := 0
+	for cnt := 10; cnt > 0; cnt-- {
+		go func() {
+			wg.Add(1)
+			respChannel := make(chan http.Response, 1)
+			doPost(&pooledClient, longerCallSleepDuration, "hello", respChannel)
+			wg.Done()
+			responses += len(respChannel)
+		}()
+	}
+
+	time.Sleep(normalCallSleepDuration)
+	// verify that 2 connections are in use
+	assert.Equal(t, int32(2), pooledClient.OutstandingConns)
+	// verify no responses yet
+	assert.Equal(t, 0, responses)
+	wg.Wait() // after this only two responses should come in - the rest timeout
+	assert.Equal(t, 2, responses)
+	assert.Equal(t, 0, int(pooledClient.OutstandingConns))
+
+}
+
+
 func TestLargeStringRead(t *testing.T) {
 	respChannel := make(chan http.Response, 1)
 	pooledClient, _ := NewPooledHttpClient(2, httpClientFactory)
@@ -259,7 +293,7 @@ func getFastResponses(poolCap int, respChannel chan http.Response) (int, bool) {
 // doExhaustPool requests all conns from the pool and makes a request on each
 // the last request is made to be extra slow to simulate an outlier
 func doExhaustPool(pooledClient *PooledHttpClient,
-	doFn func(*PooledHttpClient, time.Duration, string, chan http.Response),
+	doFn func(*PooledHttpClient, time.Duration, string, chan http.Response) (error),
 	poolCap int, respChannel chan http.Response) {
 	msg := "hello"
 
