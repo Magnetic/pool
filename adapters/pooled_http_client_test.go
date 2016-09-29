@@ -41,6 +41,12 @@ var (
 		}, nil
 	}
 
+	httpClientFactory = func() (client HttpClient, err error) {
+		conn, err := factory()
+		client = conn.(HttpClient)
+		return client, err
+	}
+
 	once sync.Once
 )
 
@@ -74,7 +80,7 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Println("sleeping for ", sleepDurNanos/1000000, "seconds")
+		fmt.Println("sleeping for ", sleepDurNanos/1000000000, "seconds")
 		time.Sleep(time.Duration(sleepDurNanos) * time.Nanosecond)
 	}
 	w.Write(data)
@@ -132,20 +138,18 @@ func doPost(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan 
 func TestConnPost(t *testing.T) {
 	p, _ := pool.NewChannelPool(30, factory)
 
-	conn, _ := p.Get()
-	defer p.Put(conn)
+	connHolder, _ := p.Get()
 
 	msg := "hello"
-	resp, err := conn.(*http.Client).Post("http://localhost:7777/echo", "text/plain", bytes.NewReader([]byte(msg)))
+	resp, err := connHolder.Conn.(*http.Client).Post("http://localhost:7777/echo", "text/plain", bytes.NewReader([]byte(msg)))
 	if err != nil {
 		t.Error(err)
 	}
 	respMsg, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		t.Error(err)
-	} else {
-		defer resp.Body.Close()
 	}
+	defer resp.Body.Close()
 
 	if msg != string(respMsg) {
 		t.Errorf("Expected response %s but got %s ", msg, resp)
@@ -190,9 +194,8 @@ func TestPooledHttpClient_Do(t *testing.T) {
 func TestPooledHttpClient_Swarm(t *testing.T) {
 	StartHTTPServer()
 
-	p, _ := pool.NewChannelPool(2, factory)
-
-	pooledClient := PooledHttpClient{connPool: p}
+	pool, _ := pool.NewChannelPool(2, factory)
+	pooledClient := PooledHttpClient{connPool: pool}
 
 	var wg sync.WaitGroup
 	responses := 0
@@ -215,6 +218,18 @@ func TestPooledHttpClient_Swarm(t *testing.T) {
 	assert.Equal(t, 10, responses)
 	assert.Equal(t, 0, int(pooledClient.OutstandingConns))
 
+}
+
+func TestLargeStringRead(t *testing.T) {
+	respChannel := make(chan http.Response, 1)
+	pooledClient, _ := NewPooledHttpClient(2, httpClientFactory)
+	largeString := generateRandomString(1024 * 1000)
+	assert.Equal(t, 1024*1000, len(largeString))
+	doPost(pooledClient, longerCallSleepDuration, largeString, respChannel)
+	resp := <-respChannel
+	body, err := ioutil.ReadAll(resp.Body)
+	assert.Nil(t, err)
+	assert.Equal(t, largeString, string(body))
 }
 
 // getFastResponses waits for normal responses to come to the channel,
@@ -255,4 +270,15 @@ func doExhaustPool(pooledClient *PooledHttpClient,
 		}
 		go doFn(pooledClient, dur, msg, respChannel)
 	}
+}
+
+// borrowed from http://stackoverflow.com/questions/22892120/how-to-generate-a-random-string-of-a-fixed-length-in-golang
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+func generateRandomString(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letterBytes[rand.Int63()%int64(len(letterBytes))]
+	}
+	return string(b)
 }

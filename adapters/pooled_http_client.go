@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"sync/atomic"
 
+	"bytes"
 	"github.com/abelyansky/pool"
+	"io/ioutil"
 )
 
 // HttpClient represents behavior of a client within net/http package
@@ -22,7 +24,35 @@ type PooledHttpClient struct {
 	OutstandingConns int32
 }
 
-func NewPooledHttpCient(poolSize int, factory func() (HttpClient, error)) (*PooledHttpClient, error) {
+type BodyWrapper struct {
+	io.ReadCloser
+	body io.Reader
+	err  error
+}
+
+func NewBodyWrapper(del io.ReadCloser) *BodyWrapper {
+	response := &BodyWrapper{}
+	data, err := ioutil.ReadAll(del)
+	del.Close()
+	response.body = bytes.NewReader(data)
+	response.err = err
+	return response
+}
+
+func (w BodyWrapper) Read(p []byte) (n int, err error) {
+	if w.err != nil {
+		return 0, w.err
+	} else {
+		return w.body.Read(p)
+	}
+
+}
+
+func (w BodyWrapper) Close() (err error) {
+	return nil
+}
+
+func NewPooledHttpClient(poolSize int, factory func() (HttpClient, error)) (*PooledHttpClient, error) {
 	factoryWrapper := func() (pool.GenericConn, error) {
 		inst, err := factory()
 		if err == nil && inst != nil {
@@ -36,38 +66,49 @@ func NewPooledHttpCient(poolSize int, factory func() (HttpClient, error)) (*Pool
 	return &PooledHttpClient{connPool: pool}, err
 }
 
-func (c *PooledHttpClient) getConn() (conn *http.Client) {
-	gcon, err := c.connPool.Get()
+func (c *PooledHttpClient) getConn() (conn *pool.ConnectionHolder, err error) {
+	holder, err := c.connPool.Get()
 	if err != nil {
-		panic(err)
+		return holder, err
 	} else {
 		atomic.AddInt32(&c.OutstandingConns, 1)
-		return gcon.(*http.Client)
+		return holder, nil
 	}
 }
 
-func (c *PooledHttpClient) putConn(conn *http.Client) {
+func (c *PooledHttpClient) putConn(conn *pool.ConnectionHolder) {
 	c.connPool.Put(conn)
 	atomic.AddInt32(&c.OutstandingConns, -1)
 }
 
 func (c *PooledHttpClient) Get(url string) (resp *http.Response, err error) {
-	conn := c.getConn()
-	defer c.putConn(conn)
-	return conn.Get(url)
+	connHolder, err := c.getConn()
+	defer c.putConn(connHolder)
+
+	if err != nil {
+		return nil, err
+	}
+	resp, err = connHolder.Conn.(*http.Client).Get(url)
+	if err != nil {
+		return
+	}
+	resp.Body = NewBodyWrapper(resp.Body)
+	return
 }
 
 func (c *PooledHttpClient) Post(url string, bodyType string, body io.Reader) (resp *http.Response, err error) {
-	conn := c.getConn()
-	defer c.putConn(conn)
-	resp, err = conn.Post(url, bodyType, body)
+	connHolder, err := c.getConn()
+	defer c.putConn(connHolder)
+	resp, err = connHolder.Conn.(*http.Client).Post(url, bodyType, body)
+	resp.Body = NewBodyWrapper(resp.Body)
 	return
 }
 
 func (c *PooledHttpClient) Do(req *http.Request) (resp *http.Response, err error) {
-	conn := c.getConn()
-	defer c.putConn(conn)
-	resp, err = conn.Do(req)
+	connHolder, err := c.getConn()
+	defer c.putConn(connHolder)
+	resp, err = connHolder.Conn.(*http.Client).Do(req)
+	resp.Body = NewBodyWrapper(resp.Body)
 	return
 }
 
