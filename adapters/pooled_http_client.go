@@ -27,6 +27,10 @@ type PooledHttpClient struct {
 	OutstandingConns int32
 }
 
+// HttpResponseBody is an adapter for body present within http.Respose
+// it holds all of the data from the original body and presents the same
+// io.Reader interface to the outside world so that this body can be used
+// in the same way as the original
 type HttpResponseBody struct {
 	io.ReadCloser
 	body io.Reader
