@@ -3,17 +3,17 @@ package pool
 import (
 	"errors"
 	"fmt"
+	"time"
 )
-
-type GenericConn interface{}
 
 // channelPool implements the Pool interface based on buffered channels.
 type channelPool struct {
 	// storage for our generic connections
-	conns chan GenericConn
+	conns chan *ConnectionHolder
 
 	// generator of generic connections
 	factory Factory
+	maxCap  int
 }
 
 // Factory is a function to create new connections.
@@ -24,8 +24,9 @@ type Factory func() (GenericConn, error)
 //
 func NewChannelPool(maxCap int, factory Factory) (Pool, error) {
 	c := &channelPool{
-		conns:   make(chan GenericConn, maxCap),
+		conns:   make(chan *ConnectionHolder, maxCap),
 		factory: factory,
+		maxCap:  maxCap,
 	}
 
 	// create initial connections, if something goes wrong,
@@ -35,7 +36,7 @@ func NewChannelPool(maxCap int, factory Factory) (Pool, error) {
 		if err != nil {
 			return nil, fmt.Errorf("factory is not able to fill the pool: %s", err)
 		}
-		c.conns <- conn
+		c.conns <- NewConnectionHolder(conn)
 	}
 
 	return c, nil
@@ -43,7 +44,7 @@ func NewChannelPool(maxCap int, factory Factory) (Pool, error) {
 
 // Get implements the Pool interfaces Get() method. If there is no new
 // connection available in the pool, the client blocks
-func (c *channelPool) Get() (GenericConn, error) {
+func (c *channelPool) Get() (*ConnectionHolder, error) {
 	if c.conns == nil {
 		return nil, ErrClosed
 	}
@@ -53,19 +54,41 @@ func (c *channelPool) Get() (GenericConn, error) {
 		if conn == nil {
 			return nil, ErrClosed
 		}
+		conn.InUse = true
 
 		return conn, nil
 	}
 }
 
+func (c *channelPool) GetWithTimeout(timeout time.Duration) (*ConnectionHolder, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	if c.conns == nil {
+		return nil, ErrClosed
+	}
+
+	select {
+	case conn := <-c.conns:
+		if conn == nil {
+			return nil, ErrClosed
+		}
+		conn.InUse = true
+
+		return conn, nil
+	case <-timer.C:
+		return nil, ErrTimedOut
+	}
+}
+
 // put puts the connection back to the pool. If the pool is full or closed,
 // conn is simply closed. A nil conn will be rejected.
-func (c *channelPool) Put(conn GenericConn) error {
+func (c *channelPool) Put(conn *ConnectionHolder) error {
 	if conn == nil {
 		return errors.New("connection is nil. rejecting")
 	}
 
-	if c.conns == nil {
+	if c.conns == nil || !conn.InUse {
 		// pool is closed, close passed connection
 		return nil
 	}
@@ -74,8 +97,7 @@ func (c *channelPool) Put(conn GenericConn) error {
 	// block and the default case will be executed.
 	select {
 	case c.conns <- conn:
-		return nil
-	default:
+		conn.InUse = false
 		return nil
 	}
 }

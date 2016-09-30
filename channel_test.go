@@ -5,8 +5,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"strings"
 
 	"golang.org/x/net/context"
+
 )
 
 var (
@@ -27,14 +29,32 @@ func TestPool_Get_Impl(t *testing.T) {
 	p, _ := newChannelPool()
 	defer p.Close()
 
-	conn, err := p.Get()
+	connHolder, err := p.Get()
 	if err != nil {
 		t.Errorf("Get error: %s", err)
 	}
 
-	_, ok := conn.(GenericConn)
+	_, ok := connHolder.Conn.(GenericConn)
 	if !ok {
-		t.Errorf("Conn is not of type poolConn")
+		t.Errorf("Conn is not of type ConnectionHolder")
+	}
+}
+
+func TestChannelPool_GetWithTimeout(t *testing.T) {
+	pool, err := NewChannelPool(1, factory)
+	defer pool.Close()
+
+	_, err = pool.Get()
+	if err != nil {
+		t.Errorf("Get error: %s", err)
+	}
+
+	if pool.Len() != 0 {
+		t.Errorf("pool size is not exhausted")
+	}
+	_, err = pool.GetWithTimeout(100 * time.Millisecond)
+	if err == nil || !strings.HasPrefix(err.Error(), "timed out") {
+		t.Errorf("timeout error expected but not received")
 	}
 }
 
@@ -103,6 +123,25 @@ func TestPool_Get(t *testing.T) {
 	}
 }
 
+func TestPool_PutTwiceNotAllowed(t *testing.T) {
+	p, err := NewChannelPool(2, factory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	conn1, err := p.Get()
+	_, err = p.Get()
+
+	p.Put(conn1)
+	// attempt to add the same conn twice
+	p.Put(conn1)
+
+	if p.Len() == 2 {
+		t.Errorf("put the same connection back to the pool twice")
+	}
+}
+
 func TestPool_Put(t *testing.T) {
 	p, err := NewChannelPool(30, factory)
 	if err != nil {
@@ -111,7 +150,7 @@ func TestPool_Put(t *testing.T) {
 	defer p.Close()
 
 	// get/create from the pool
-	conns := make([]GenericConn, MaximumCap)
+	conns := make([]*ConnectionHolder, MaximumCap)
 	for i := 0; i < MaximumCap; i++ {
 		conn, _ := p.Get()
 		conns[i] = conn
@@ -130,7 +169,7 @@ func TestPool_Put(t *testing.T) {
 	p.Close() // close pool
 
 	conn, _ := factory()
-	p.Put(conn)
+	p.Put(NewConnectionHolder(conn))
 	if p.Len() != 0 {
 		t.Errorf("Put error. Closed pool shouldn't allow to put connections.")
 	}
@@ -174,7 +213,7 @@ func TestPool_Close(t *testing.T) {
 
 func TestPoolConcurrent(t *testing.T) {
 	p, _ := newChannelPool()
-	pipe := make(chan GenericConn, 0)
+	pipe := make(chan *ConnectionHolder, 0)
 
 	go func() {
 		p.Close()

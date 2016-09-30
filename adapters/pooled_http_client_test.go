@@ -41,6 +41,12 @@ var (
 		}, nil
 	}
 
+	httpClientFactory = func() (client HttpClient, err error) {
+		conn, err := factory()
+		client = conn.(HttpClient)
+		return client, err
+	}
+
 	once sync.Once
 )
 
@@ -74,7 +80,7 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Println("sleeping for ", sleepDurNanos/1000000, "seconds")
+		fmt.Println("sleeping for ", sleepDurNanos/1000000, "milliseconds")
 		time.Sleep(time.Duration(sleepDurNanos) * time.Nanosecond)
 	}
 	w.Write(data)
@@ -95,7 +101,7 @@ func simpleHTTPServer() {
 	}
 }
 
-func do(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan chan http.Response) {
+func do(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan chan http.Response) (err error){
 	url := testUrl
 	if sleepDur > 0 {
 		sleepdurStr := strconv.Itoa(int(sleepDur.Nanoseconds()))
@@ -103,14 +109,15 @@ func do(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan chan
 	}
 	req, err := http.NewRequest("POST", url, bytes.NewReader([]byte(body)))
 	if err != nil {
-		panic(err)
+		return err
 	}
 	resp, _ := cl.Do(req)
 	fmt.Println("got response", resp)
 	respChan <- *resp
+	return nil
 }
 
-func doPost(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan chan http.Response) {
+func doPost(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan chan http.Response) (err error) {
 	url := testUrl
 	if sleepDur > 0 {
 		sleepdurStr := strconv.Itoa(int(sleepDur.Nanoseconds()))
@@ -121,31 +128,30 @@ func doPost(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan 
 
 	if err != nil {
 		fmt.Println("got error", err)
-		panic(err)
+		return err
 	} else {
 		fmt.Println("got response", resp)
 		respChan <- *resp
 	}
+	return nil
 
 }
 
 func TestConnPost(t *testing.T) {
 	p, _ := pool.NewChannelPool(30, factory)
 
-	conn, _ := p.Get()
-	defer p.Put(conn)
+	connHolder, _ := p.Get()
 
 	msg := "hello"
-	resp, err := conn.(*http.Client).Post("http://localhost:7777/echo", "text/plain", bytes.NewReader([]byte(msg)))
+	resp, err := connHolder.Conn.(*http.Client).Post("http://localhost:7777/echo", "text/plain", bytes.NewReader([]byte(msg)))
 	if err != nil {
 		t.Error(err)
 	}
 	respMsg, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		t.Error(err)
-	} else {
-		defer resp.Body.Close()
 	}
+	defer resp.Body.Close()
 
 	if msg != string(respMsg) {
 		t.Errorf("Expected response %s but got %s ", msg, resp)
@@ -190,9 +196,8 @@ func TestPooledHttpClient_Do(t *testing.T) {
 func TestPooledHttpClient_Swarm(t *testing.T) {
 	StartHTTPServer()
 
-	p, _ := pool.NewChannelPool(2, factory)
-
-	pooledClient := PooledHttpClient{connPool: p}
+	pool, _ := pool.NewChannelPool(2, factory)
+	pooledClient := PooledHttpClient{connPool: pool}
 
 	var wg sync.WaitGroup
 	responses := 0
@@ -215,6 +220,50 @@ func TestPooledHttpClient_Swarm(t *testing.T) {
 	assert.Equal(t, 10, responses)
 	assert.Equal(t, 0, int(pooledClient.OutstandingConns))
 
+}
+
+// TestPooledHttpClient_Swarm tests
+func TestPooledHttpClient_SwarmWithTimeout(t *testing.T) {
+	StartHTTPServer()
+
+	pool, _ := pool.NewChannelPool(2, factory)
+	pooledClient := PooledHttpClient{connPool: pool}
+	pooledClient.timeout = normalCallSleepDuration / 2
+
+	var wg sync.WaitGroup
+	responses := 0
+	for cnt := 10; cnt > 0; cnt-- {
+		go func() {
+			wg.Add(1)
+			respChannel := make(chan http.Response, 1)
+			doPost(&pooledClient, longerCallSleepDuration, "hello", respChannel)
+			wg.Done()
+			responses += len(respChannel)
+		}()
+	}
+
+	time.Sleep(normalCallSleepDuration)
+	// verify that 2 connections are in use
+	assert.Equal(t, int32(2), pooledClient.OutstandingConns)
+	// verify no responses yet
+	assert.Equal(t, 0, responses)
+	wg.Wait() // after this only two responses should come in - the rest timeout
+	assert.Equal(t, 2, responses)
+	assert.Equal(t, 0, int(pooledClient.OutstandingConns))
+
+}
+
+
+func TestLargeStringRead(t *testing.T) {
+	respChannel := make(chan http.Response, 1)
+	pooledClient, _ := NewPooledHttpClient(2, httpClientFactory)
+	largeString := generateRandomString(1024 * 1000)
+	assert.Equal(t, 1024*1000, len(largeString))
+	doPost(pooledClient, longerCallSleepDuration, largeString, respChannel)
+	resp := <-respChannel
+	body, err := ioutil.ReadAll(resp.Body)
+	assert.Nil(t, err)
+	assert.Equal(t, largeString, string(body))
 }
 
 // getFastResponses waits for normal responses to come to the channel,
@@ -244,7 +293,7 @@ func getFastResponses(poolCap int, respChannel chan http.Response) (int, bool) {
 // doExhaustPool requests all conns from the pool and makes a request on each
 // the last request is made to be extra slow to simulate an outlier
 func doExhaustPool(pooledClient *PooledHttpClient,
-	doFn func(*PooledHttpClient, time.Duration, string, chan http.Response),
+	doFn func(*PooledHttpClient, time.Duration, string, chan http.Response) (error),
 	poolCap int, respChannel chan http.Response) {
 	msg := "hello"
 
@@ -255,4 +304,15 @@ func doExhaustPool(pooledClient *PooledHttpClient,
 		}
 		go doFn(pooledClient, dur, msg, respChannel)
 	}
+}
+
+// borrowed from http://stackoverflow.com/questions/22892120/how-to-generate-a-random-string-of-a-fixed-length-in-golang
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+func generateRandomString(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letterBytes[rand.Int63()%int64(len(letterBytes))]
+	}
+	return string(b)
 }
