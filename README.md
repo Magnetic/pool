@@ -19,7 +19,7 @@ import "github.com/abelyansky/pool"
 
 and use `pool` as the package name inside the code.
 
-## Example
+## Example of using a generic pool
 
 ```go
 // create a factory() to be used with channel based pool
@@ -52,6 +52,28 @@ current := p.Len()
 // of http.Client such as Do,Get,Post and delegates the call to the pool of http.Client instances
 ```
 
+## Example of using an http pool adapter
+
+```go
+// create an http client factory
+httpClientFactory = func() (adapters.HttpClient, error) {
+		return &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConnsPerHost: 1,
+				// to make a point that this is what we want
+				DisableKeepAlives:     false,
+				ExpectContinueTimeout: 15 * time.Second,
+				ResponseHeaderTimeout: 15 * time.Second,
+			},
+			Timeout: 15 * time.Second,
+		}, nil
+	}
+// instantiate a pool
+pooledHttpClient := adapters.NewPooledHttpClient(10, httpClientFactory)
+// use it as you a regulal http.Client
+// then cleanup when you are done
+pooledHttpClient.Cleanup()
+```
 
 ## Credits
 
