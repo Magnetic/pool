@@ -5,11 +5,20 @@ Pool is a thread safe connection pool for any kinds of connections. It enforces 
 
 ## Install and Usage
 
-Install the package with:
+Install gvt if you don't have it
+```bash
+go get github.com/FiloSottile/gvt
+'''
 
+Install the package with:
 ```bash
 go get github.com/abelyansky/pool
 ```
+
+Bring in dependencies
+'''bash
+gvt restore
+'''
 
 Import it with:
 
@@ -33,14 +42,13 @@ factory    := func() (pool.GenericConnection, error)
 // into the pool.
 p, err := pool.NewChannelPool(30, factory)
 
-// now you can get a connection from the pool, if there is no connection
-// available it will block
-conn, err := p.Get()
+// now you can get a connection holder from the pool referencing the connection.
+// if there is no connection available the call will block
+connWrapper, err := p.Get()
 
-// do something with conn and put it back to the pool by closing the connection
-// (this doesn't close the underlying connection instead it's putting it back
-// to the pool).
-conn.Close()
+// do something with conn and put it back to the pool
+// connWrapper.Conn.(*net.TCPConn).Write(...)
+p.Put(connWrapper)
 
 // close pool any time you want, this closes all the connections inside a pool
 p.Close()
