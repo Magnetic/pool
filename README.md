@@ -1,8 +1,8 @@
 # Pool
 
-A  thread safe connection pool for any kinds of connections. It enforces blocking on the get requests when the pool is exhausted
-Additionally it provides an http client adapter which behaves like regular go http.Client but uses a pool of http.Client instances
-underneath. Additional adapters can be built for other types of connections using this pattern
+A  thread safe connection pool for any kinds of connections. It enforces blocking on the get requests when the pool is exhausted.
+Additionally it provides an http client adapter which behaves like a regular http.Client but uses a pool of http.Client instances
+underneath. Additional adapters can be built for other types of connections using this pattern.
 
 ## Install and Usage
 
@@ -56,9 +56,6 @@ p.Close()
 
 // currently available connections in the pool
 current := p.Len()
-
-// you can also use the default http.Client adapter which implements the methods
-// of http.Client such as Do,Get,Post and delegates the call to the pool of http.Client instances
 ```
 
 ## Example of using an http pool adapter
