@@ -1,14 +1,15 @@
 # Pool
 
-Pool is a thread safe connection pool for any kinds of connections. It enforces blocking of the client requests when the pool is exhausted
-
+A  thread safe connection pool for any kinds of connections. It enforces blocking on the get requests when the pool is exhausted
+Additionally it provides an http client adapter which behaves like regular go http.Client but uses a pool of http.Client instances
+underneath. Additional adapters can be built for other types of connections using this pattern
 
 ## Install and Usage
 
 Install gvt if you don't have it
 ```bash
 go get github.com/FiloSottile/gvt
-'''
+```
 
 Install the package with:
 ```bash
@@ -16,9 +17,9 @@ go get github.com/abelyansky/pool
 ```
 
 Bring in dependencies
-'''bash
+```bash
 gvt restore
-'''
+```
 
 Import it with:
 
