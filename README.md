@@ -81,12 +81,6 @@ pooledHttpClient := adapters.NewPooledHttpClient(10, httpClientFactory)
 pooledHttpClient.Cleanup()
 ```
 
-## Credits
-
- * [Fatih Arslan](https://github.com/fatih)
- * [sougou](https://github.com/sougou)
- * [abelyansky](https://github.com/abelyansky)
-
 ## License
 
 The MIT License (MIT) - see LICENSE for more details
