@@ -47,6 +47,10 @@ p, err := pool.NewChannelPool(30, factory)
 // if there is no connection available the call will block
 connWrapper, err := p.Get()
 
+// or specify a timeout to avoid blocking indefinitely
+// in case of a timeout err will be set to pool.ErrTimedOut
+connWrapper, err := p.GetWithTimeout(duration)
+
 // do something with conn and put it back to the pool
 // connWrapper.Conn.(*net.TCPConn).Write(...)
 p.Put(connWrapper)
