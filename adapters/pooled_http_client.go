@@ -128,6 +128,9 @@ func (c *PooledHttpClient) Post(url string, bodyType string, body io.Reader) (re
 		return nil, err
 	}
 	resp, err = connHolder.Conn.(*http.Client).Post(url, bodyType, body)
+	if err != nil {
+		return
+	}
 	resp.Body = newBodyWrapper(resp.Body)
 	return
 }
@@ -139,6 +142,9 @@ func (c *PooledHttpClient) Do(req *http.Request) (resp *http.Response, err error
 		return nil, err
 	}
 	resp, err = connHolder.Conn.(*http.Client).Do(req)
+	if err != nil {
+		return
+	}
 	resp.Body = newBodyWrapper(resp.Body)
 	return
 }
