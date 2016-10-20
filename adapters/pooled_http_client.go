@@ -1,15 +1,14 @@
 package adapters
 
 import (
+	"bytes"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"sync/atomic"
-	"io/ioutil"
 	"time"
-	"bytes"
-	
-	"github.com/abelyansky/pool"
 
+	"github.com/Magnetic/pool"
 )
 
 // HttpClient represents behavior of a client within net/http package
