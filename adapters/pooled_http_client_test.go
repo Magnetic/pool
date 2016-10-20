@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abelyansky/pool"
+	"github.com/Magnetic/pool"
 )
 
 const testUrl = "http://localhost:7777/echo"
@@ -101,7 +101,7 @@ func simpleHTTPServer() {
 	}
 }
 
-func do(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan chan http.Response) (err error){
+func do(cl *PooledHttpClient, sleepDur time.Duration, body string, respChan chan http.Response) (err error) {
 	url := testUrl
 	if sleepDur > 0 {
 		sleepdurStr := strconv.Itoa(int(sleepDur.Nanoseconds()))
@@ -253,7 +253,6 @@ func TestPooledHttpClient_SwarmWithTimeout(t *testing.T) {
 
 }
 
-
 func TestLargeStringRead(t *testing.T) {
 	respChannel := make(chan http.Response, 1)
 	pooledClient, _ := NewPooledHttpClient(2, httpClientFactory)
@@ -293,7 +292,7 @@ func getFastResponses(poolCap int, respChannel chan http.Response) (int, bool) {
 // doExhaustPool requests all conns from the pool and makes a request on each
 // the last request is made to be extra slow to simulate an outlier
 func doExhaustPool(pooledClient *PooledHttpClient,
-	doFn func(*PooledHttpClient, time.Duration, string, chan http.Response) (error),
+	doFn func(*PooledHttpClient, time.Duration, string, chan http.Response) error,
 	poolCap int, respChannel chan http.Response) {
 	msg := "hello"
 

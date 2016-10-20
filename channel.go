@@ -93,8 +93,9 @@ func (c *channelPool) Put(conn *ConnectionHolder) error {
 		return nil
 	}
 
-	// put the resource back into the pool. If the pool is full, this will
-	// block and the default case will be executed.
+	// put the resource back into the pool. This code will block if
+	// the capacity of the pool is full, but the checks above will prevent
+	// that scenario
 	select {
 	case c.conns <- conn:
 		conn.InUse = false
